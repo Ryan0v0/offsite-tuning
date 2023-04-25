@@ -106,7 +106,7 @@ def main():
     if accelerator.is_main_process:
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
-    accelerator.wait_for_everyone()
+    # accelerator.wait_for_everyone()
 
     # Make one log on every process with the configuration for debugging.
     # also log to a file in output_dir
@@ -313,6 +313,27 @@ def main():
     experiment_config["lr_scheduler_type"] = experiment_config["lr_scheduler_type"].value
     accelerator.init_trackers("offsite_tuning", experiment_config)
 
+    from opacus import PrivacyEngine
+
+    MAX_GRAD_NORM = 0.1
+
+    EPOCHS = 3
+    LOGGING_INTERVAL = 5000 # once every how many steps we run evaluation cycle and report metrics
+    EPSILON = 7.5
+    DELTA = 1 / len(train_dataloader) # Parameter for privacy accounting. Probability of not achieving privacy guarantees
+
+    privacy_engine = PrivacyEngine()
+
+    model, optimizer, train_dataloader = privacy_engine.make_private_with_epsilon(
+        module=model,
+        optimizer=optimizer,
+        data_loader=train_dataloader,
+        target_delta=DELTA,
+        target_epsilon=EPSILON, 
+        epochs=EPOCHS,
+        max_grad_norm=MAX_GRAD_NORM,
+    )
+
     # Train!
     total_batch_size = args.per_device_train_batch_size * \
         accelerator.num_processes * args.gradient_accumulation_steps
@@ -333,6 +354,7 @@ def main():
         losses = []
         for step, batch in enumerate(eval_dataloader):
             with torch.no_grad():
+                # batch = {k: v.half() for k, v in batch.items()}
                 outputs = model(**batch)
             loss = outputs.loss
             losses.append(accelerator.gather_for_metrics(
